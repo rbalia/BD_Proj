@@ -1,64 +1,28 @@
 import os
 import sys
-# os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"   # see issue #152
-# os.environ["CUDA_VISIBLE_DEVICES"]="0"
-# os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # or any {'0', '1', '2'}
 
 import numpy as np
 import shutil
 import time
-import pandas as pd
-import csv
 import cv2 as cv
-import tensorflow as tf
-from elephas.hyperparam import HyperParamModel
-
-from skimage import img_as_ubyte, img_as_float
+from skimage import img_as_ubyte
 from sklearn.model_selection import train_test_split
-
-#from modules.utils import utils_segmentation as uSgm
-from modules.utils import utils_configs as conf
-from modules.utils import utils_processing as uElab
-from modules.utils import utils_print
-from modules.uNet_Data_BUS import load_train_data, load_test_mask_data, load_test_data, load_censored_dataset, \
-    load_train_data_large, load_test_data_large, load_test_mask_data_large
-import modules.uNet_Model as uNet_Model
-#from uNet_Predict import predict
-#from uNet_Train_GPU_Spark import train
-#import uNet_Model_SE
-
-#from main_2 import handcraftedSegmentation
-#from classification_single import classification
-#from uNet_Data_Aug import load_augmented_train_data
 from skimage import io
 import matplotlib.pyplot as plt
-from tensorflow.keras.callbacks import EarlyStopping
-from tensorflow.keras.callbacks import ModelCheckpoint
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense, Dropout, Activation
-from tensorflow.keras.optimizers import SGD
+
+from modules.utils import utils_configs as conf
+from modules.utils import utils_processing as uElab
+from modules.uNet_Data_BUS import load_train_data, load_test_mask_data, load_test_data
+import modules.uNet_Model as uNet_Model
+
 import tensorflow as tf
-from tensorflow.keras.layers import Input, concatenate, Conv2D, MaxPooling2D, Conv2DTranspose, Convolution2D, \
-    UpSampling2D
-from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.layers import Dropout, UpSampling2D
-from tensorflow.python.keras import Model
-# from keras.layers.merge import concatenate
-# from tensorflow import concat as concatenate
-from tensorflow.keras.layers import GaussianNoise
-from tensorflow.keras.callbacks import EarlyStopping
-from tensorflow.keras.callbacks import ModelCheckpoint
-import tensorflow.keras.backend as K
-
 import findspark
-
 findspark.init()
+
 from pyspark import SparkContext, SparkConf
 
-import elephas
 from elephas.utils.rdd_utils import to_simple_rdd
 from elephas.spark_model import SparkModel
-from elephas.spark_model import load_spark_model
 
 
 def splitData(images, masks):
@@ -113,12 +77,9 @@ def uNet_SparkTrain(sparkContext, X_train, Y_train, num_workers=1, epochs=50, sa
     # Generate and compile the uNet model
     print("Generating and compiling model...")
     model = uNet_Model.getModel(conf.img_rows, conf.img_cols)
-    """model.compile(metrics=[uNet_Model.dice_coef], loss="binary_crossentropy", optimizer="adam")
+    model.compile(metrics=[uNet_Model.dice_coef], loss="binary_crossentropy", optimizer="adam")
     model.compiled_metrics = [uNet_Model.dice_coef]
-    model.compiled_metrics._metrics = [uNet_Model.dice_coef]"""
-    model.compile(metrics=["acc"], loss="binary_crossentropy", optimizer="adam")
-    model.compiled_metrics = ["acc"]
-    model.compiled_metrics._metrics = ["acc"]
+    model.compiled_metrics._metrics = [uNet_Model.dice_coef]
 
     # Train model
     print('-' * 30)
@@ -188,16 +149,17 @@ if __name__ == '__main__':
 
     # PREPROCESSING ====================================================================================================
     # Create the Spark Context - more infos at https://stackoverflow.com/questions/32356143/what-does-setmaster-local-mean-in-spark
-    sConf = SparkConf().setAppName('BigData_DistributedTraining')\
-        .setMaster('spark://ip-172-31-24-208.us-east-2.compute.internal:7077')\
+    sConf = SparkConf().setAppName('BigData_DistributedTraining').setMaster('local[3]')
+    """sConf = SparkConf().setAppName('BigData_DistributedTraining') \
+        .setMaster('spark://ip-172-31-24-208.us-east-2.compute.internal:7077') \
         .set("spark.default.parallelism", sys.argv[2])\
         .set("spark.network.timeout", "10000000")\
         .set("spark.executor.heartbeatInterval", "1000000")\
         .set("spark.worker.cleanup.enabled", "true") \
         .set("spark.worker.cleanup.interval", "300") \
-        .set("spark.worker.cleanup.appDataTtl", "300")
+        .set("spark.worker.cleanup.appDataTtl", "300")"""
 
-    #sConf = SparkConf().setAppName('BigData_DistributedTraining').setMaster('spark://riccardo-VirtualBox:7077')
+
     sc = SparkContext(conf=sConf)
     sc.addPyFile("modules.zip")
 
@@ -209,28 +171,24 @@ if __name__ == '__main__':
     print("TrainSet Shape...: " + str(train_img.shape))
     print("TestSet Shape....: " + str(test_img.shape))
 
-    """# Standardization
+   # Standardization
     print("Image standardization...")
     mean, std = getStandardizationParams(np.concatenate((train_img, test_img)))
     train_img_stdz = generateStandardizatedSet(train_img, mean, std)
-    test_img_stdz = generateStandardizatedSet(test_img, mean, std)"""
+    test_img_stdz = generateStandardizatedSet(test_img, mean, std)
 
 
     # DISTRIBUTE TRAINING / PREDICT / SAVE =============================================================================
     # Training : Get model, compile, generate SparkModel, fit
     start_train = time.time()
-    #spark_model = uNet_SparkTrain(sc, train_img_stdz, train_msk, epochs=int(sys.argv[3]), saveFlag=False)
     spark_model = uNet_SparkTrain(sc, train_img_stdz, train_msk, epochs=int(sys.argv[3]),saveFlag=False)
     end_train = time.time()
     TE_Training = round(end_train - start_train,3)
     print("Time Elapsed : Training : " + str(TE_Training) + " seconds")
 
-
     # Prediction
     predictions = uNet_SparkPredict(spark_model, test_img_stdz, printPlot=False)
     avgIOU = getAverageIOU(test_msk, predictions)
-    #print("Average IOU: " + str(avgIOU))
-
 
     print("-" * 60)
     print("Spark + Tensorflow : Distributed Training : Results")
@@ -243,46 +201,3 @@ if __name__ == '__main__':
     if os.path.exists(modelFolder):
         shutil.rmtree(modelFolder, ignore_errors=True)
     spark_model.save(modelFolder)
-
-    # Save SparkModel (Delete if already exist)
-    modelFolder = "models/" + sys.argv[1]
-    if os.path.exists(modelFolder):
-        shutil.rmtree(modelFolder, ignore_errors=True)
-    spark_model.save(modelFolder)
-
-
-
-
-    # LOAD / PREDICT ===================================================================================================
-    """# Load SparkModel
-    spark_model2 = uNet_LoadSparkModel("models/spark_1W_DistTrain") # <path>/<path>
-
-    # Predict
-    start_pred = time.time()
-    predictions2 = uNet_SparkPredict(spark_model2, test_img_stdz, printPlot=False)
-    end_pred = time.time()
-    print("Time Elapsed : Predictions : " + str(round(end_pred - start_pred, 3)) + " seconds")
-
-    # Evaluate IOU Score
-    avgIOU = getAverageIOU(test_msk, predictions2)
-    print("Average IOU: " + str(avgIOU))
-
-    # for img, mask, pred in zip(test_img, test_msk, predictions2):
-    #    utils_print.printBrief3Cells("title", ["1","2","3"], [img, mask, pred])"""
-
-
-    # HYPER-PARAMETER OPTIMIZATION =====================================================================================
-
-    # Define hyper-parameter model and run optimization.
-    #hyperparam_model = HyperParamModel(sc)
-    #hyperparam_model.minimize(model=model, data=data, max_evals=5)
-
-    # https://github.com/maxpumperla/elephas/blob/master/examples/hyperparam_optimization.py
-
-    # TODO
-    # X - Esplorare le opzioni "Estimate"
-    # Y - Implementare HyperParameter Optimization
-
-    # TODO Future
-    # Creare Cluster / Verificare Cluster Educate
-

@@ -9,7 +9,7 @@ img_cols_proc = 640
 
 batch_size = 8
 
-pkgDir = "/home/riccardo/PycharmProjects/AdvCV_LastVersion_Clone2/binaryPkg/"
+pkgDir = "binaryPkg/"
 prdDir = "preds/"
 setDir = "dataset/"
 tstDir = "test/"
